@@ -6,12 +6,14 @@ from feat_extract import VisionLanguageProcessor
 import os
 import scripts.utils 
 from scripts.grasp_detetor import Graspnet
+from PIL import Image
 
 # Set seed for reproducibility
 seed = 1234
 random.seed(seed)
 torch.manual_seed(seed)
 np.random.seed(seed)
+counter = 0  # Initialize counter for saving poses with unique file names
 
 torch.set_grad_enabled(False)
 
@@ -43,6 +45,16 @@ def get_text_feats(in_text, processor):
         text_feats /= text_feats.norm(dim=-1, keepdim=True)
     return text_feats
 
+def get_image_feats(image_path, processor):
+    image = Image.open(image_path).convert("RGB")
+    image = processor.preprocess(image).unsqueeze(0).to(processor.device)
+    
+    with torch.no_grad():
+        image_feats = processor.clip_model.encode_image(image).float()
+        image_feats /= image_feats.norm(dim=-1, keepdim=True)
+    
+    return image_feats
+
 def get_scene(env, testing_case_file):
     reset = False
     while not reset:
@@ -56,8 +68,12 @@ def get_scene(env, testing_case_file):
 def get_feat(color_image, processor):
     return processor.process_image(color_image)
 
-def run_inference(query_text, color_image, depth_image, pcd, processor, feat, env):
-    query_embedding = get_text_feats(query_text, processor)
+def run_inference(query_type, query_input, color_image, depth_image, pcd, processor, feat, env):
+    global counter
+    if query_type == "text":
+        query_embedding = get_text_feats(query_input, processor)
+    elif query_type == "image":
+        query_embedding = get_image_feats(query_input, processor)
     objects = []
     for idx, img_feat in enumerate(feat["image_feats"]):
         object_embedding = torch.tensor(img_feat).to(processor.device)
@@ -71,13 +87,33 @@ def run_inference(query_text, color_image, depth_image, pcd, processor, feat, en
     graspnet = Graspnet()
     with torch.no_grad():
         sorted_grasp_pose_set = graspnet.grasp_detection(cropped_pcd, env.get_true_object_poses())
-        print("Number of grasping poses:", len(sorted_grasp_pose_set))
-    file_name = f"poses_{query_text}.npy"
+        print("Number of grasping poses:", len(sorted_grasp_pose_set))    
+    
+    counter += 1  # Increment counter each time a query is processed
+    def get_unique_filename(query_type, query_input):      
+        if query_type == "image":
+            safe_query = os.path.basename(query_input).split('.')[0]  # Extract filename without extension
+        else:
+            safe_query = query_input.replace(" ", "_")[:10]  # Trim and replace spaces for text query
+        
+        return f"poses_{query_type}_{safe_query}_{counter}.npy"
+
+    file_name = get_unique_filename(query_type, query_input)
     np.save(file_name, np.array(sorted_grasp_pose_set))
 
     action = sorted_grasp_pose_set[0]
     reward, done = env.step(action)
     print("Action Executed")
+
+def input_section():
+    while True:
+        query_type = input("Enter query type ('text' or 'image', or 'exit' to quit): ").strip().lower()
+        if query_type in ["text", "image", "exit"]:
+            return query_type
+        else:
+            print("Invalid input! Please enter 'text', 'image', or 'exit'.")
+
+
 
 def main():
     # path to testing file
@@ -89,16 +125,19 @@ def main():
     env.seed(1234)
     color_image, depth_image, pcd = get_scene(env, testing_case_file)
     feat = get_feat(color_image, processor)
+
     while True:
-        query_text = input("Enter your query (or type 'exit' to quit): ")
-        if query_text.lower() == 'exit':
+        query_type = input_section()
+        if query_type == "exit":
             break
-        run_inference(query_text, color_image, depth_image, pcd, processor, feat, env)
+        query_input = input(f"Enter your {query_type} query: ").strip()
+        run_inference(query_type, query_input, color_image, depth_image, pcd, processor, feat, env)
+
         reset = False
         while not reset:
             env.reset()
             reset, _ = env.add_object_push_from_file(testing_case_file)
-            print(f"Environment reset : {reset}")
+            print(f"Environment reset: {reset}")
 
 if __name__ == "__main__":
     main()
