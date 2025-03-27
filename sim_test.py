@@ -4,7 +4,7 @@ import numpy as np
 from env.environment_sim import Environment
 from feat_extract import VisionLanguageProcessor
 import os
-import scripts.utils import crop_pointcloud
+import scripts.utils 
 from scripts.grasp_detetor import Graspnet
 
 # Set seed for reproducibility
@@ -67,20 +67,25 @@ def run_inference(query_text, color_image, depth_image, pcd, processor, feat, en
     best_match_idx = objects[0]["idx"]
     best_bbox = feat["xyxy"][best_match_idx]
     x1, y1, x2, y2 = map(int, best_bbox)
-    cropped_pcd = crop_pointcloud(pcd, (x1, y1, x2, y2), color_image, depth_image, env.bounds)
+    cropped_pcd = scripts.utils.crop_pointcloud(pcd, (x1, y1, x2, y2), color_image, depth_image)
     graspnet = Graspnet()
     with torch.no_grad():
         sorted_grasp_pose_set = graspnet.grasp_detection(cropped_pcd, env.get_true_object_poses())
         print("Number of grasping poses:", len(sorted_grasp_pose_set))
+    file_name = f"poses_{query_text}.npy"
+    np.save(file_name, np.array(sorted_grasp_pose_set))
+
     action = sorted_grasp_pose_set[0]
     reward, done = env.step(action)
     print("Action Executed")
 
 def main():
-    testing_case_file = "/home/arun/Adv_CV/bullet_try/Vision-Language-Grasping/testing_cases/new_set_224_3.txt"
-    ROOT_PATH = "/content/Grounded-Segment-Anything"
+    # path to testing file
+    testing_case_file = "/content/Open-Vocabulary-Multi-Modal-Robotic-Grasping/testing_cases/new_set_224_2.txt"
+    # path to Grounded-Segment-Anything folder
+    ROOT_PATH = "/content/Open-Vocabulary-Multi-Modal-Robotic-Grasping/Grounded-Segment-Anything"
     processor = setup(ROOT_PATH)
-    env = Environment(gui=True)
+    env = Environment(gui=False)
     env.seed(1234)
     color_image, depth_image, pcd = get_scene(env, testing_case_file)
     feat = get_feat(color_image, processor)
@@ -89,8 +94,11 @@ def main():
         if query_text.lower() == 'exit':
             break
         run_inference(query_text, color_image, depth_image, pcd, processor, feat, env)
-        while not env.reset()[0]:
-            env.add_object_push_from_file(testing_case_file)
+        reset = False
+        while not reset:
+            env.reset()
+            reset, _ = env.add_object_push_from_file(testing_case_file)
+            print(f"Environment reset : {reset}")
 
 if __name__ == "__main__":
     main()

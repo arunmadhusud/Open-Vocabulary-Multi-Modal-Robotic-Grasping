@@ -226,10 +226,9 @@ class VisionLanguageProcessor:
 
         return detections
 
-    def process_image(self, image_path):
-        print(f"Processing image: {image_path}")
-        image = cv2.imread(image_path)  # BGR format
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)  # Convert to RGB
+    def process_image(self, image_rgb):
+        print(f"Processing image")        
+        image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)  # Convert to BGR for Grounding DINO
         image_pil = Image.fromarray(image_rgb)
 
         # RAM inference
@@ -276,9 +275,11 @@ class VisionLanguageProcessor:
             pickle.dump(results, f)
         print("Saved results at:", detect_save_path)
 
+        return results
+
 
 if __name__ == "__main__":
-    ROOT_PATH = "/home/teju1898/scene_graphs/Grounded-Segment-Anything"
+    ROOT_PATH = "/content/Open-Vocabulary-Multi-Modal-Robotic-Grasping/Grounded-Segment-Anything"
 
     if not torch.cuda.is_available():
         print("CUDA not available.")
@@ -296,5 +297,7 @@ if __name__ == "__main__":
     }
 
     processor = VisionLanguageProcessor(config)
-    image_path = "/home/arun/Adv_CV/bullet_try/Vision-Language-Grasping/color_image_new.png"
-    processor.process_image(image_path)
+    image_path = "/content/color_image_new_2.png"
+    image = cv2.imread(image_path)  # BGR format
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    feat = processor.process_image(image_rgb)
