@@ -145,5 +145,6 @@ I would like to thank the authors for their valuable contributions to these repo
 - [Vision-Language-Grasping ](https://github.com/xukechun/Vision-Language-Grasping.git)
 - [ThinkGrasp ](https://github.com/H-Freax/ThinkGrasp.git)
 - [Grounded Segment Anything](https://github.com/IDEA-Research/Grounded-Segment-Anything.git)
-- [open_clip](https://github.com/mlfoundations/open_clip.git)
+- [Open_clip](https://github.com/mlfoundations/open_clip.git)
+- [GraspnetAPI](https://github.com/graspnet/graspnetAPI)
 
