@@ -1,5 +1,5 @@
 # Multi-Modal Open-Vocabulary Grasping
-Object grasping in robotics is inherently challenging due to the need for higher-level understanding. Instead of relying on basic commands like "grasp object at Pose X," robots must interpret more complex instructions, such as "grasp the apple." Moreover, these systems should not be confined to a fixed set of objects seen during training; they must be capable of operating in an open-vocabulary manner. By incorporating multi-modal capabilities, robots can engage with humans more dynamically, accepting inputs such as text, images, and audio. This project, Multi-Modal Open-Vocabulary Grasping, integrates foundational models for scene understanding with Graspnet for grasp prediction, allows robots to interact intelligently and flexibly with their environment, respond to high-level queries, and enhance human-robot interaction in dynamic environments.
+Object grasping in robotics is inherently challenging due to the need for higher-level understanding. Instead of relying on basic commands like *"Give me the object at Pose X"*, robots must interpret more complex instructions, such as *"Give me an apple"*.  Moreover, these systems should not be confined to a fixed set of objects seen during training; they must be capable of operating in an **open-vocabulary manner**.. By incorporating multi-modal capabilities, robots can engage with humans more dynamically, accepting inputs such as text, images, and audio. This project, **Multi-Modal Open-Vocabulary Grasping**, integrates **foundational models** for scene understanding with **GraspNet** for grasp prediction, enabling robots to interact more intelligently and flexibly with their surroundings.  By incorporating **multi-modal capabilities**, this system allows robots to understand and respond to diverse input modalities—including **text and images**—enhancing human-robot interaction and adaptability in dynamic environments. 
 
 <div align="center">
   <img src="images/workflow.png" alt="openvocabgrasp" width="75%">
@@ -44,7 +44,7 @@ pip install -e ./recognize-anything/
 pip install supervision==0.21.0
 ```
 
-### **Step 5: Download Model Weights**
+### **Step 4: Download Model Weights**
 
 ```bash
 git submodule init
@@ -54,7 +54,7 @@ wget https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alp
 wget https://huggingface.co/spaces/xinyu1205/Tag2Text/resolve/main/ram_swin_large_14m.pth
 ```
 
-### **Step 6: Install GraspNet**
+### **Step 5: Install GraspNet**
 
 ```bash
 cd ..
@@ -70,14 +70,14 @@ pip install .
 cd ..
 ```
 
-### **Step 7: Install Additional Dependencies**
+### **Step 6: Install Additional Dependencies**
 ```bash
 pip install -U pybullet
 pip install open3d
 pip install open3d-plus
 ```
 
-### **Step 8: For Google Colab (Optional)**
+### **Step 7: For Google Colab (Optional)**
 If running on Google Colab, set the required environment variables before installation:
 
 ```bash
@@ -91,7 +91,7 @@ os.environ["SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL"] = "True"
 
 ## Assets
 
-Download the processed object models from this [link](https://drive.google.com/file/d/1) and copy the contents to the `assets` directory as shown below:
+Download the processed object models from this [link](https://drive.google.com/drive/u/1/folders/1ujsTs2nX79I77kNzs1GpHQbyE0GPVCBq) and copy the contents to the `assets` directory as shown below:
 
 ```bash
 OPEN-VOCABULARY-MULTI-MODAL-ROBOTIC-GRASPING
@@ -121,6 +121,20 @@ python sim_test.py --testing_file testing_cases/new_set_224_2.txt --gui False
 Once the scene is processed using Grounded Segment Anything, you can interact with the robot using a text query or an image query through the command-line interface. For text queries, simply enter your query when prompted.For image queries, provide the absolute path to your image file as input.
 
 ## Demos
+
+### Text Queries
+
+| <img src="images/apple.gif" width="150" height="250"/> | <img src="images/shampoo.gif" width="150" height="250" /> | <img src="images/pear.gif" width="150" height="250" /> |
+|:--:|:--:|:--:|
+|"Give me an apple"|"Pick a bathroom essential"|"Find me a pear"|
+| <img src="images/mouse.gif" width="150" height="250"/> | <img src="images/banana.gif" width="150" height="250"/> | <img src="images/facewash.gif" width="150" height="250"/> |
+|"Click"|"Find fruit for my lunch"|"I need a product to clean my face"|
+
+### Image Query
+
+| <img src="images/image_query.jpg" width="100" height="150"/> | <img src="images/shampoo_image_query.gif" width="150" height="250"/> |
+|:--:|:--:|
+|"Query Image"|"Matched Result: Shampoo"|
 
 
 ## Acknowledgements
