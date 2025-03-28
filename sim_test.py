@@ -69,7 +69,7 @@ def get_scene(env, testing_case_file):
 def get_feat(color_image, processor):
     return processor.process_image(color_image)
 
-def run_inference(query_type, query_input, color_image, depth_image, pcd, processor, feat, env):
+def run_inference(query_type, query_input, color_image, depth_image, pcd, processor, feat, env,save_poses=False):
     global counter
     if query_type == "text":
         query_embedding = get_text_feats(query_input, processor)
@@ -83,7 +83,6 @@ def run_inference(query_type, query_input, color_image, depth_image, pcd, proces
     objects.sort(key=lambda x: x["similarity"], reverse=True)
     best_match_idx = objects[0]["idx"]
     best_bbox = feat["xyxy"][best_match_idx]
-    print(best_bbox)
     x1, y1, x2, y2 = map(int, best_bbox)
     cropped_pcd = scripts.utils.crop_pointcloud(pcd, (x1, y1, x2, y2), color_image, depth_image)
     graspnet = Graspnet()
@@ -92,20 +91,25 @@ def run_inference(query_type, query_input, color_image, depth_image, pcd, proces
         print("Number of grasping poses:", len(sorted_grasp_pose_set))    
     
     counter += 1  # Increment counter each time a query is processed
-    def get_unique_filename(query_type, query_input):      
-        if query_type == "image":
-            safe_query = os.path.basename(query_input).split('.')[0]  # Extract filename without extension
-        else:
-            safe_query = query_input.replace(" ", "_")  # Trim and replace spaces for text query
+    if save_poses:
+        def get_unique_filename(query_type, query_input):      
+            if query_type == "image":
+                safe_query = os.path.basename(query_input).split('.')[0]
+            else:
+                safe_query = query_input.replace(" ", "_")
+            
+            return f"poses_{query_type}_{safe_query}_{counter}.npy"
+
+        file_name = get_unique_filename(query_type, query_input)
+        np.save(file_name, np.array(sorted_grasp_pose_set))
+    
+    if len(sorted_grasp_pose_set) != 0:
+        action = sorted_grasp_pose_set[0]
+        reward, done = env.step(action)
+        print("Action Executed")
+    else:
+        print("No valid grasping poses found")
         
-        return f"poses_{query_type}_{safe_query}_{counter}.npy"
-
-    file_name = get_unique_filename(query_type, query_input)
-    np.save(file_name, np.array(sorted_grasp_pose_set))
-
-    action = sorted_grasp_pose_set[0]
-    reward, done = env.step(action)
-    print("Action Executed")
 
 def input_section():
     while True:
