@@ -132,7 +132,7 @@ Once the scene is processed using Grounded Segment Anything, you can interact wi
 
 ### Image Query
 
-| <img src="images/image_query.jpg" width="100" height="150"/> | <img src="images/shampoo_image_query.gif" width="150" height="250"/> |
+| <img src="images/image_query.jpg" width="100" height="100"/> | <img src="images/shampoo_image_query.gif" width="150" height="250"/> |
 |:--:|:--:|
 |"Query Image"|"Matched Result: Shampoo"|
 
