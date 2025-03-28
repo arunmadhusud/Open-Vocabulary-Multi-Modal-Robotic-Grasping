@@ -7,6 +7,7 @@ import os
 import scripts.utils 
 from scripts.grasp_detetor import Graspnet
 from PIL import Image
+import argparse
 
 # Set seed for reproducibility
 seed = 1234
@@ -47,7 +48,7 @@ def get_text_feats(in_text, processor):
 
 def get_image_feats(image_path, processor):
     image = Image.open(image_path).convert("RGB")
-    image = processor.preprocess(image).unsqueeze(0).to(processor.device)
+    image = processor.clip_preprocess(image).unsqueeze(0).to(processor.device)
     
     with torch.no_grad():
         image_feats = processor.clip_model.encode_image(image).float()
@@ -82,6 +83,7 @@ def run_inference(query_type, query_input, color_image, depth_image, pcd, proces
     objects.sort(key=lambda x: x["similarity"], reverse=True)
     best_match_idx = objects[0]["idx"]
     best_bbox = feat["xyxy"][best_match_idx]
+    print(best_bbox)
     x1, y1, x2, y2 = map(int, best_bbox)
     cropped_pcd = scripts.utils.crop_pointcloud(pcd, (x1, y1, x2, y2), color_image, depth_image)
     graspnet = Graspnet()
@@ -94,7 +96,7 @@ def run_inference(query_type, query_input, color_image, depth_image, pcd, proces
         if query_type == "image":
             safe_query = os.path.basename(query_input).split('.')[0]  # Extract filename without extension
         else:
-            safe_query = query_input.replace(" ", "_")[:10]  # Trim and replace spaces for text query
+            safe_query = query_input.replace(" ", "_")  # Trim and replace spaces for text query
         
         return f"poses_{query_type}_{safe_query}_{counter}.npy"
 
@@ -115,13 +117,11 @@ def input_section():
 
 
 
-def main():
-    # path to testing file
-    testing_case_file = "/content/Open-Vocabulary-Multi-Modal-Robotic-Grasping/testing_cases/new_set_224_2.txt"
+def main(testing_case_file, gui):
     # path to Grounded-Segment-Anything folder
-    ROOT_PATH = "/content/Open-Vocabulary-Multi-Modal-Robotic-Grasping/Grounded-Segment-Anything"
+    ROOT_PATH = "Grounded-Segment-Anything"
     processor = setup(ROOT_PATH)
-    env = Environment(gui=False)
+    env = Environment(gui=gui)
     env.seed(1234)
     color_image, depth_image, pcd = get_scene(env, testing_case_file)
     feat = get_feat(color_image, processor)
@@ -140,4 +140,9 @@ def main():
             print(f"Environment reset: {reset}")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--testing_file", type=str, required=True, help="Path to the testing file")
+    parser.add_argument("--gui", type=lambda x: (str(x).lower() == "true"), default=True, help="Enable GUI (default: True)")
+    args = parser.parse_args()
+    
+    main(args.testing_file, args.gui)
