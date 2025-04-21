@@ -74,10 +74,15 @@ def get_feat(color_image, processor):
 def query_vision_llm(client, image_base64, user_query):
     # Create the system message
     system_message = (
-        "You are shown an image with several objects, each labeled with a number. "
-        "When the user asks a question (e.g., \"What can I eat?\"), you should respond with "
-        "ONLY the number corresponding to the most appropriate object. "
-        "Provide only a single number - no explanations, no object names, just the number."
+        "You are an advanced vision assistant for a robotic grasping system. You are shown an image with objects labeled with numbers. "
+        "Your task is to analyze the user's query and determine which labeled object best matches their request. "
+        "First, carefully reason through which object best matches the query. Consider: "
+        "- Spatial relationships (above, below, left, right, corner, center, next to) "
+        "- Object properties (color, shape, size, material) "
+        "- Object categories (fruit, tool, container, etc.) "
+        "- Potential functions of objects "
+        "After your analysis, ALWAYS end your response with a line that says 'LABEL: X' where X is the number of the object that best answers the query. "
+        "This final line must be in exactly this format for the robotic system to process it correctly."
     )
 
     try:
@@ -98,14 +103,14 @@ def query_vision_llm(client, image_base64, user_query):
                     ]
                 }
             ],
-            model="meta-llama/llama-4-scout-17b-16e-instruct",  # Using the same model as your other function
-            max_completion_tokens=2048,  # Equivalent to max_tokens in your original
-            temperature=0.1  # Keeping your original temperature setting
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            max_completion_tokens=2048,  # Keep this low as we only need the number
+            temperature=0.5
         )
 
         # Extract the label from the response
         label_text = response.choices[0].message.content.strip()
-        print(f"Raw model response: {label_text}")
+        # print(f"Raw model response: {label_text}")
         return label_text
 
     except Exception as e:
@@ -131,21 +136,20 @@ def run_inference_with_vlm(query, color_image, depth_image, pcd, processor, feat
     
     # Query the vision-language model to identify which label to target
     print(f"Querying VLM with: '{query}'")
-    label_text = query_vision_llm(client, image_base64, query)
-    
-    # Extract the numeric label if present
+    label_text = query_vision_llm(client, image_base64, query)    
+
     import re
     label = None
-    if label_text:
-        numbers = re.findall(r'\d+', label_text)
-        if numbers:
-            label = numbers[0]
-    
+    label_match = re.search(r'LABEL:\s*(\d+)', label_text)
+    if label_match:
+        label = label_match.group(1)
+  
     if not label:
         print("No valid label identified from VLM response.")
         return
     
     print(f"VLM identified object with label: {label}")
+    
     
     # Check if the label exists in our mask_labels
     if label not in feat["mask_labels"]:
