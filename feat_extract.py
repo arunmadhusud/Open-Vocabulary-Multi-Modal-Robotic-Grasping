@@ -16,13 +16,17 @@ import dataclasses
 from typing import List
 import pickle
 import gzip
-
+import matplotlib.pyplot as plt
+import matplotlib.colors as mplc
+import io
+import base64
 
 
 class VisionLanguageProcessor:
-    def __init__(self, config):
+    def __init__(self, config, use_som = False):
         self.device = torch.device("cuda")
         self.config = config
+        self.use_som = use_som
 
         torch.set_grad_enabled(False)
         print("Initializing models...")
@@ -34,7 +38,8 @@ class VisionLanguageProcessor:
         self.sam, self.sam_predictor = self.load_sam()
 
         # CLIP
-        self.clip_model, self.clip_preprocess, self.clip_tokenizer = self.load_clip()
+        if not self.use_som:
+            self.clip_model, self.clip_preprocess, self.clip_tokenizer = self.load_clip()
 
         # RAM (Tag2Text)
         self.tagging_model, self.tagging_transform = self.load_ram()
@@ -205,8 +210,8 @@ class VisionLanguageProcessor:
             annotated_image = box_annotator.annotate(scene=annotated_image, detections=detections, labels=labels)
         return annotated_image, labels
 
-    def apply_nms(self, detections, nms_threshold=0.5):
-        """Apply Non-Maximum Suppression to remove redundant boxes."""
+    def apply_nms(self, detections, nms_threshold=0.5, min_area=500):
+        """Apply Non-Maximum Suppression to remove redundant boxes and small areas."""
         print("Applying NMS...")
         nms_idx = torchvision.ops.nms(
             torch.from_numpy(detections.xyxy),
@@ -218,13 +223,47 @@ class VisionLanguageProcessor:
         detections.confidence = detections.confidence[nms_idx]
         detections.class_id = detections.class_id[nms_idx]
 
-        # Somehow some detections will have class_id=-1, remove them
+        # Filter out class_id == -1
         valid_idx = detections.class_id != -1
         detections.xyxy = detections.xyxy[valid_idx]
         detections.confidence = detections.confidence[valid_idx]
         detections.class_id = detections.class_id[valid_idx]
 
+        # Filter out boxes with small area
+        widths = detections.xyxy[:, 2] - detections.xyxy[:, 0]
+        heights = detections.xyxy[:, 3] - detections.xyxy[:, 1]
+        areas = widths * heights
+        valid_area_idx = areas >= min_area
+
+        detections.xyxy = detections.xyxy[valid_area_idx]
+        detections.confidence = detections.confidence[valid_area_idx]
+        detections.class_id = detections.class_id[valid_area_idx]
+
         return detections
+
+
+    def draw_number_in_mask(self, binary_mask, text, color="g", label_mode='1'):
+        """
+        Find proper places to draw text given a binary mask.
+        """
+        def number_to_string(n):
+            chars = []
+            while n:
+                n, remainder = divmod(n-1, 26)
+                chars.append(chr(97 + remainder))
+            return ''.join(reversed(chars))
+            
+        binary_mask = np.pad(binary_mask, ((1, 1), (1, 1)), 'constant')
+        mask_dt = cv2.distanceTransform(binary_mask.astype(np.uint8), cv2.DIST_L2, 0)
+        mask_dt = mask_dt[1:-1, 1:-1]
+        max_dist = np.max(mask_dt)
+        coords_y, coords_x = np.where(mask_dt == max_dist)  # coords is [y, x]
+        if label_mode == 'a':
+            text = number_to_string(int(text))
+        else:
+            text = str(text)
+        
+        return (coords_x[len(coords_x)//2], coords_y[len(coords_y)//2]), text, color
 
     def process_image(self, image_rgb):
         print(f"Processing image")        
@@ -251,31 +290,117 @@ class VisionLanguageProcessor:
                 sam_predictor=self.sam_predictor, image=image_rgb, xyxy=detections.xyxy
             )
 
-            # CLIP feature extraction
-            image_crops, image_feats, text_feats = self.compute_clip_features(
-                image_rgb, detections, self.clip_model, self.clip_preprocess, self.clip_tokenizer, classes, self.device
-            )
+            # CLIP feature extraction - only if not using SoM
+            if not self.use_som:
+                image_crops, image_feats, text_feats = self.compute_clip_features(
+                    image_rgb, detections, self.clip_model, self.clip_preprocess, self.clip_tokenizer, classes, self.device
+                )
+            else:
+                image_crops, image_feats, text_feats = [], [], []
         else:
             image_crops, image_feats, text_feats = [], [], []
 
-        # Save visualization
+        # Save basic visualization
         annotated_image, labels = self.vis_result_fast(image, detections, classes)
-        vis_save_path = os.path.join(self.config["ROOT_PATH"], "vis.png")
-        cv2.imwrite(vis_save_path, annotated_image)
-        print("Saved visualization at:", vis_save_path)
+        
+        # Only generate mask labels and base64 image if SoM is enabled
+        mask_labels = []
+        image_base64 = None
+        
+        if self.use_som:
+            # Create a better visualization with matplotlib
+            fig, ax = plt.subplots(figsize=(image_rgb.shape[1]/100, image_rgb.shape[0]/100), dpi=100)
+            ax.imshow(image_rgb)
+            
+            # Draw masks and add text labels inside each mask
+            for i, mask in enumerate(detections.mask):
+                # Get a color for this instance
+                color = f"C{i % 10}"  # Cycle through matplotlib color cycle
+                
+                # Convert color to RGB
+                color_rgb = np.array(mplc.to_rgb(color))
+                
+                # Create a colored mask
+                mask_rgba = np.zeros((mask.shape[0], mask.shape[1], 4))
+                mask_rgba[:, :, :3] = color_rgb
+                mask_rgba[:, :, 3] = mask * 0.4  # 0.4 alpha for the mask
+                
+                # Show the mask
+                ax.imshow(mask_rgba)
+                
+                # Get position and text for this mask
+                position, text, _ = self.draw_number_in_mask(mask, i+1, color=color)
 
-        # Save results
+                # Store the label for this mask
+                mask_labels.append(text)
+                
+                # Make the text color more visible
+                color_for_text = np.maximum(color_rgb, 0.15)
+                color_for_text[np.argmax(color_for_text)] = max(0.8, np.max(color_for_text))
+                
+                # Determine whether to use black or white text background based on the text color
+                def contrasting_color(rgb):
+                    R, G, B = rgb
+                    Y = 0.299 * R + 0.587 * G + 0.114 * B
+                    return 'black' if Y > 0.5 else 'white'
+                    
+                bbox_color = contrasting_color(color_for_text)
+                
+                # Draw the text
+                ax.text(
+                    position[0],
+                    position[1],
+                    text,
+                    size=max(np.sqrt(fig.get_figheight() * fig.get_figwidth()) * 2, 10),
+                    family="sans-serif",
+                    bbox={"facecolor": bbox_color, "alpha": 0.8, "pad": 0.7, "edgecolor": "none"},
+                    verticalalignment="center",
+                    horizontalalignment="center",
+                    color=color_for_text,
+                    zorder=10,
+                )
+            
+            ax.axis('off')
+            plt.tight_layout(pad=0)
+            
+            mask_labels = np.array(mask_labels)
+            
+            # Save the visualization
+            vis_save_path = os.path.join(self.config["ROOT_PATH"], "vis.png")
+            plt.savefig(vis_save_path, bbox_inches="tight", pad_inches=0)
+
+            # Create base64 encoding of the image
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png', bbox_inches='tight', pad_inches=0)
+            buffer.seek(0)
+            image_base64 = base64.b64encode(buffer.read()).decode()
+            plt.close(fig)
+            print("Saved visualization at:", vis_save_path)
+        
+        # Create results dictionary
         results = {
-            "xyxy": detections.xyxy, "confidence": detections.confidence, "class_id": detections.class_id,
-            "mask": detections.mask, "classes": classes, "image_crops": image_crops,
-            "image_feats": image_feats, "text_feats": text_feats, "tagging_text_prompt": text_prompt
+            "xyxy": detections.xyxy, 
+            "confidence": detections.confidence, 
+            "class_id": detections.class_id,
+            "mask": detections.mask, 
+            "classes": classes, 
+            "image_crops": image_crops,
+            "image_feats": image_feats, 
+            "text_feats": text_feats, 
+            "tagging_text_prompt": text_prompt
         }
+        
+        # Add mask_labels only if SoM is enabled
+        if self.use_som and len(mask_labels) > 0:
+            results["mask_labels"] = mask_labels
+        
+        # Save results
         detect_save_path = os.path.join(self.config["ROOT_PATH"], "detect.pkl.gz")
         with gzip.open(detect_save_path, "wb") as f:
             pickle.dump(results, f)
         print("Saved results at:", detect_save_path)
 
-        return results
+        return results, image_base64
 
 
 if __name__ == "__main__":
@@ -296,8 +421,8 @@ if __name__ == "__main__":
         "RAM_CHECKPOINT_PATH": os.path.join(ROOT_PATH, "ram_swin_large_14m.pth"),
     }
 
-    processor = VisionLanguageProcessor(config)
+    processor = VisionLanguageProcessor(config,use_som=False)
     image_path = "/content/color_image_new_2.png"
     image = cv2.imread(image_path)  # BGR format
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    feat = processor.process_image(image_rgb)
+    feat,_= processor.process_image(image_rgb)

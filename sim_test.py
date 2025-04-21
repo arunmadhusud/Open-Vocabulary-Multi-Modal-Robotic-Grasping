@@ -8,6 +8,8 @@ import scripts.utils
 from scripts.grasp_detetor import Graspnet
 from PIL import Image
 import argparse
+from groq import Groq
+import yaml
 
 # Set seed for reproducibility
 seed = 1234
@@ -18,7 +20,7 @@ counter = 0  # Initialize counter for saving poses with unique file names
 
 torch.set_grad_enabled(False)
 
-def setup(ROOT_PATH):
+def setup(ROOT_PATH,use_som=False):
     # Check CUDA availability
     if not torch.cuda.is_available():
         print("CUDA not available.")
@@ -36,7 +38,7 @@ def setup(ROOT_PATH):
     }
 
     # Initialize VisionLanguageProcessor
-    processor = VisionLanguageProcessor(config)
+    processor = VisionLanguageProcessor(config,use_som)
     return processor
 
 def get_text_feats(in_text, processor):
@@ -68,6 +70,125 @@ def get_scene(env, testing_case_file):
 
 def get_feat(color_image, processor):
     return processor.process_image(color_image)
+
+def query_vision_llm(client, image_base64, user_query):
+    # Create the system message
+    system_message = (
+        "You are shown an image with several objects, each labeled with a number. "
+        "When the user asks a question (e.g., \"What can I eat?\"), you should respond with "
+        "ONLY the number corresponding to the most appropriate object. "
+        "Provide only a single number - no explanations, no object names, just the number."
+    )
+
+    try:
+        # Make the API call using Groq's format
+        response = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_message},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_query},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            model="meta-llama/llama-4-scout-17b-16e-instruct",  # Using the same model as your other function
+            max_completion_tokens=2048,  # Equivalent to max_tokens in your original
+            temperature=0.1  # Keeping your original temperature setting
+        )
+
+        # Extract the label from the response
+        label_text = response.choices[0].message.content.strip()
+        print(f"Raw model response: {label_text}")
+        return label_text
+
+    except Exception as e:
+        print(f"Error querying vision LLM: {e}")
+        return None
+
+def load_config(config_path="config.yaml"):
+    """Load API keys from config file"""
+    if not os.path.exists(config_path):
+        print(f"Error: Config file {config_path} not found.")
+        return None
+            
+    try:
+        with open(config_path, 'r') as file:
+            config = yaml.safe_load(file)
+            return config
+    except Exception as e:
+        print(f"Error loading configuration: {e}")
+        return None
+
+def run_inference_with_vlm(query, color_image, depth_image, pcd, processor, feat, env, client, image_base64, save_poses=False):
+    global counter
+    
+    # Query the vision-language model to identify which label to target
+    print(f"Querying VLM with: '{query}'")
+    label_text = query_vision_llm(client, image_base64, query)
+    
+    # Extract the numeric label if present
+    import re
+    label = None
+    if label_text:
+        numbers = re.findall(r'\d+', label_text)
+        if numbers:
+            label = numbers[0]
+    
+    if not label:
+        print("No valid label identified from VLM response.")
+        return
+    
+    print(f"VLM identified object with label: {label}")
+    
+    # Check if the label exists in our mask_labels
+    if label not in feat["mask_labels"]:
+        print(f"Label {label} not found in detected objects.")
+        return
+    
+    mask_labels = feat["mask_labels"]
+    if isinstance(mask_labels, np.ndarray):
+        mask_labels = mask_labels.tolist()
+    # Get the index of the identified label
+    label_idx = mask_labels.index(label)
+    
+    # Get the bounding box for the identified object
+    best_bbox = feat["xyxy"][label_idx]
+    x1, y1, x2, y2 = map(int, best_bbox)
+    
+    print(f"Targeting object with bounding box: [{x1}, {y1}, {x2}, {y2}]")
+    
+    # Crop the point cloud to the object's bounding box
+    cropped_pcd = scripts.utils.crop_pointcloud(pcd, (x1, y1, x2, y2), color_image, depth_image)
+    
+    # Compute grasping poses
+    graspnet = Graspnet()
+    with torch.no_grad():
+        sorted_grasp_pose_set = graspnet.grasp_detection(cropped_pcd, env.get_true_object_poses())
+        print(f"Number of grasping poses for object {label}: {len(sorted_grasp_pose_set)}")
+    
+    counter += 1  # Increment counter each time a query is processed
+    
+    if save_poses:
+        safe_query = query.replace(" ", "_")
+        file_name = f"poses_vlm_{safe_query}_{label}_{counter}.npy"
+        np.save(file_name, np.array(sorted_grasp_pose_set))
+        print(f"Saved poses to {file_name}")
+    
+    if len(sorted_grasp_pose_set) != 0:
+        action = sorted_grasp_pose_set[0]
+        reward, done = env.step(action)
+        print(f"Action executed for object {label}")
+        return True
+    else:
+        print(f"No valid grasping poses found for object {label}")
+        return False
 
 def run_inference(query_type, query_input, color_image, depth_image, pcd, processor, feat, env,save_poses=False):
     global counter
@@ -111,32 +232,58 @@ def run_inference(query_type, query_input, color_image, depth_image, pcd, proces
         print("No valid grasping poses found")
         
 
-def input_section():
+def input_section(use_som):
+    """Get input from user based on mode"""
     while True:
         query_type = input("Enter query type ('text' or 'image', or 'exit' to quit): ").strip().lower()
         if query_type in ["text", "image", "exit"]:
-            return query_type
+            if query_type == "exit":
+                return "exit", None
+            if use_som and query_type == "image":
+                print("Only text query is supported for SoM")
+                return "exit", None
+            query_input = input(f"Enter your {query_type} query: ").strip()
+            return query_type, query_input
         else:
             print("Invalid input! Please enter 'text', 'image', or 'exit'.")
 
 
 
-def main(testing_case_file, gui):
+def main(testing_case_file, gui, use_som=False, config_path="config.yaml"):
     # path to Grounded-Segment-Anything folder
     ROOT_PATH = "Grounded-Segment-Anything"
-    processor = setup(ROOT_PATH)
+    processor = setup(ROOT_PATH,use_som)
     env = Environment(gui=gui)
     env.seed(1234)
     color_image, depth_image, pcd = get_scene(env, testing_case_file)
-    feat = get_feat(color_image, processor)
-
+    feat, image_base64 = get_feat(color_image, processor)
+    
+    # Initialize Groq client if using SoM
+    client = None
+    if use_som:
+        # Load API key from config
+        config = load_config(config_path)        
+        if not config:
+            print("Error: Could not load configuration file.")
+            return            
+        api_key = config.get("api_keys", {}).get("groq")        
+        if not api_key:
+            print("Error: No Groq API key found in config file.")
+            print(f"Please add your API key to {config_path} under api_keys.groq")
+            return            
+        client = Groq(api_key=api_key)
+    
     while True:
-        query_type = input_section()
+        query_type, query_input = input_section(use_som)        
         if query_type == "exit":
-            break
-        query_input = input(f"Enter your {query_type} query: ").strip()
-        run_inference(query_type, query_input, color_image, depth_image, pcd, processor, feat, env)
-
+            break            
+        if use_som:
+            # Use VLM-based object selection
+            run_inference_with_vlm(query_input, color_image, depth_image, pcd, processor, feat, env, client, image_base64, save_poses=True)
+        else:
+            # Use embedding-based object selection
+            run_inference(query_type, query_input, color_image, depth_image, pcd, processor, feat, env, save_poses=False)
+        
         reset = False
         while not reset:
             env.reset()
@@ -147,6 +294,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--testing_file", type=str, required=True, help="Path to the testing file")
     parser.add_argument("--gui", type=lambda x: (str(x).lower() == "true"), default=True, help="Enable GUI (default: True)")
+    parser.add_argument("--som", action="store_true", help="Use Set of Mark Prompting mode with VLM")
+    parser.add_argument("--config", type=str, default="config.yaml", help="Path to configuration file")
     args = parser.parse_args()
     
-    main(args.testing_file, args.gui)
+    main(args.testing_file, args.gui, args.som, args.config)

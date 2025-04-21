@@ -1,0 +1,3 @@
+# config.yaml
+api_keys:
+  groq: "your qroq_api key here"
