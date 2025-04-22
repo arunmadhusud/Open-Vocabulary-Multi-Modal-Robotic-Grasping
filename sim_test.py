@@ -104,7 +104,7 @@ def query_vision_llm(client, image_base64, user_query):
                 }
             ],
             model="meta-llama/llama-4-scout-17b-16e-instruct",
-            max_completion_tokens=2048,  # Keep this low as we only need the number
+            max_completion_tokens=2048,  
             temperature=0.5
         )
 

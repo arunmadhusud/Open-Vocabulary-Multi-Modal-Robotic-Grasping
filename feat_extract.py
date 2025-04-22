@@ -325,9 +325,7 @@ class VisionLanguageProcessor:
                 mask_rgba[:, :, :3] = color_rgb
                 mask_rgba[:, :, 3] = mask * 0.4  # 0.4 alpha for the mask
                 
-                # Show the mask
-                ax.imshow(mask_rgba)
-                
+               
                 # Get position and text for this mask
                 position, text, _ = self.draw_number_in_mask(mask, i+1, color=color)
 
